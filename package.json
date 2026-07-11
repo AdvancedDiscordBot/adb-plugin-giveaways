@@ -1,0 +1,35 @@
+{
+  "name": "adb-plugin-giveaways",
+  "version": "1.0.0",
+  "description": "Host giveaways with configurable duration, winners, and requirements.",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "plugin.json",
+    "commands",
+    "models",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/local-harness.js"
+  },
+  "keywords": [
+    "adb-plugin",
+    "discord",
+    "discord.js",
+    "giveaway"
+  ],
+  "author": "DeadIndian",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "node-cron": "^3.0.3"
+  },
+  "peerDependencies": {
+    "discord.js": ">=14.0.0",
+    "mongoose": ">=7.0.0"
+  },
+  "devDependencies": {
+    "mongoose": "^8.0.0"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "adb-plugin-giveaways",
+  "displayName": "Giveaways",
+  "version": "1.0.0",
+  "description": "Host giveaways with configurable duration, winners, and requirements. Reroll support, auto-end, and buttons to enter.",
+  "author": "DeadIndian",
+  "main": "index.js",
+  "requiresRestart": false,
+  "permissions": [
+    "db.read",
+    "db.write",
+    "commands.register"
+  ],
+  "discordPermissions": [
+    "SendMessages",
+    "AddReactions"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "defaultDuration": {
+        "type": "string",
+        "default": "1h",
+        "description": "Default giveaway duration (e.g., 30m, 1h, 1d)"
+      },
+      "maxWinners": {
+        "type": "number",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 50,
+        "description": "Max winners per giveaway"
+      }
+    }
+  }
+}
