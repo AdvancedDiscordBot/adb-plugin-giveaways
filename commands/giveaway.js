@@ -180,7 +180,9 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 
 				const newWinners = [];
 				const pool = [...eligible];
-				for (let i = 0; i < Math.min(giveaway.winnerCount, pool.length); i++) {
+				// pool shrinks via splice, so compute the count once up front.
+				const drawCount = Math.min(giveaway.winnerCount, pool.length);
+				for (let i = 0; i < drawCount; i++) {
 					const idx = Math.floor(Math.random() * pool.length);
 					newWinners.push(pool.splice(idx, 1)[0]);
 				}
@@ -221,7 +223,9 @@ async function pickWinners(giveaway, client) {
 
 	const winners = [];
 	const pool = [...eligible];
-	for (let i = 0; i < Math.min(giveaway.winnerCount, pool.length); i++) {
+	// pool shrinks via splice, so compute the count once up front.
+	const drawCount = Math.min(giveaway.winnerCount, pool.length);
+	for (let i = 0; i < drawCount; i++) {
 		const idx = Math.floor(Math.random() * pool.length);
 		winners.push(pool.splice(idx, 1)[0]);
 	}
