@@ -1,35 +1,40 @@
 {
-  "name": "adb-plugin-giveaways",
-  "displayName": "Giveaways",
-  "version": "1.0.0",
-  "description": "Host giveaways with configurable duration, winners, and requirements. Reroll support, auto-end, and buttons to enter.",
-  "author": "DeadIndian",
-  "main": "index.js",
-  "requiresRestart": false,
-  "permissions": [
-    "db.read",
-    "db.write",
-    "commands.register"
-  ],
-  "discordPermissions": [
-    "SendMessages",
-    "AddReactions"
-  ],
-  "configSchema": {
-    "type": "object",
-    "properties": {
-      "defaultDuration": {
-        "type": "string",
-        "default": "1h",
-        "description": "Default giveaway duration (e.g., 30m, 1h, 1d)"
-      },
-      "maxWinners": {
-        "type": "number",
-        "default": 10,
-        "minimum": 1,
-        "maximum": 50,
-        "description": "Max winners per giveaway"
-      }
-    }
-  }
+	"name": "adb-plugin-giveaways",
+	"displayName": "Giveaways",
+	"version": "1.1.0",
+	"description": "Host giveaways with configurable duration, winners, and requirements. Reroll support, auto-end, and buttons to enter.",
+	"author": "DeadIndian",
+	"main": "index.js",
+	"requiresRestart": true,
+	"isolation": false,
+	"manifestVersion": 2,
+	"process": {
+		"model": "persistent",
+		"maxExecutionMs": 15000,
+		"memoryMb": 256,
+		"persistentReason": "Runs un-isolated (system:raw-client) for button-based entry (interactionCreate), editing the live giveaway message on end, and a node-cron sweep for due giveaways — button collectors and message editing are outside the sandboxed RPC surface."
+	},
+	"capabilities": {
+		"system": ["raw-client"],
+		"storage": ["own-collection"],
+		"discord": ["SendMessages", "EmbedLinks", "ManageMessages"]
+	},
+	"permissions": {
+		"system": ["raw-client"],
+		"storage": ["own-collection"],
+		"discord": ["SendMessages", "EmbedLinks", "ManageMessages"],
+		"network": { "outbound": [] },
+		"filesystem": { "read": [], "write": [] },
+		"childProcess": false,
+		"nativeAddons": false
+	},
+	"declaredDependencies": [{ "package": "node-cron", "version": "^3.0.3" }],
+	"discordPermissions": ["SendMessages", "AddReactions"],
+	"configSchema": {
+		"type": "object",
+		"properties": {
+			"defaultDuration": { "type": "string", "default": "1h", "description": "Default giveaway duration (e.g., 30m, 1h, 1d)" },
+			"maxWinners": { "type": "number", "default": 10, "minimum": 1, "maximum": 50, "description": "Max winners per giveaway" }
+		}
+	}
 }

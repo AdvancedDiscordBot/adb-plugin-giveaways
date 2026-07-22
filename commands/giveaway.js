@@ -14,6 +14,21 @@ function parseDuration(str) {
 	return val * (multipliers[unit] || 0);
 }
 
+// DM each winner that they won. A user with DMs closed just throws — swallow
+// it per-winner so one closed DM doesn't abort the rest.
+async function dmWinners(giveaway, interaction) {
+	for (const winnerId of giveaway.winners || []) {
+		try {
+			const user = await interaction.client.users.fetch(winnerId);
+			await user.send(
+				`🎉 Congratulations! You won **${giveaway.prize}** in **${interaction.guild?.name || "the server"}**!`
+			);
+		} catch {
+			// DMs disabled / user unreachable — ignore.
+		}
+	}
+}
+
 function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinners = 10 } = {}) {
 	return {
 		data: {
@@ -80,6 +95,19 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 					name: "list",
 					description: "List active giveaways in this server",
 					type: 1,
+				},
+				{
+					name: "cancel",
+					description: "Cancel an active giveaway (no winners drawn)",
+					type: 1,
+					options: [
+						{
+							name: "message_id",
+							type: 3,
+							description: "Message ID of the giveaway to cancel",
+							required: true,
+						},
+					],
 				},
 			],
 		},
@@ -159,6 +187,7 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 				giveaway.endsAt = new Date();
 				await pickWinners(giveaway, interaction.client);
 				await giveaway.save();
+				await dmWinners(giveaway, interaction);
 
 				return interaction.reply({ content: "Giveaway ended early.", ephemeral: true });
 			}
@@ -213,11 +242,38 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 				);
 				return interaction.reply({ content: lines.join("\n"), ephemeral: true });
 			}
+
+			if (sub === "cancel") {
+				const messageId = interaction.options.getString("message_id");
+				const giveaway = await GiveawayModel.findOne({ guildId, messageId });
+				if (!giveaway) {
+					return interaction.reply({ content: "Giveaway not found.", ephemeral: true });
+				}
+				if (giveaway.ended) {
+					return interaction.reply({ content: "Giveaway already ended.", ephemeral: true });
+				}
+
+				await GiveawayModel.deleteOne({ _id: giveaway._id });
+
+				// Best-effort: remove the giveaway message so no dead button lingers.
+				const channel = await interaction.client.channels.fetch(giveaway.channelId).catch(() => null);
+				if (channel) {
+					const msg = await channel.messages.fetch(giveaway.messageId).catch(() => null);
+					if (msg) await msg.delete().catch(() => {});
+				}
+
+				return interaction.reply({ content: "Giveaway cancelled.", ephemeral: true });
+			}
 		},
 	};
 }
 
 async function pickWinners(giveaway, client) {
+	// Mark ended first, unconditionally: an empty giveaway is still over. If we
+	// only set this after drawing, a giveaway with zero entrants stays ended:false
+	// and the 30s cron (and manual /giveaway end) re-processes it forever.
+	giveaway.ended = true;
+
 	const eligible = giveaway.entrants.filter((id) => id !== client.user.id);
 	if (eligible.length === 0) return;
 
@@ -230,7 +286,6 @@ async function pickWinners(giveaway, client) {
 		winners.push(pool.splice(idx, 1)[0]);
 	}
 	giveaway.winners = winners;
-	giveaway.ended = true;
 }
 
 module.exports = { createGiveawayCommand, pickWinners };

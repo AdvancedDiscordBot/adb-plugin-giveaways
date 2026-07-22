@@ -24,19 +24,36 @@ function assert(cond, label) {
 	}
 }
 
-// pickWinners only needs client.user.id.
-const fakeClient = { user: { id: "mock-bot-id" } };
+// pickWinners only needs client.user.id. The command paths also touch
+// client.users.fetch (DM winners on `end`) and client.channels.fetch
+// (reroll/cancel); both return offline stubs so the harness never hits the net.
+const dmLog = [];
+const fakeClient = {
+	user: { id: "mock-bot-id" },
+	users: {
+		fetch: async (id) => ({ id, send: async (msg) => dmLog.push({ id, msg }) }),
+	},
+	channels: {
+		fetch: async () => ({
+			send: async () => {},
+			messages: { fetch: async () => ({ delete: async () => {} }) },
+		}),
+	},
+};
 
 function makeGiveaway(entrants, winnerCount) {
 	return { entrants: [...entrants], winnerCount, winners: [], ended: false };
 }
 
-// Minimal fake interaction for the giveaway command.
-function fakeInteraction(sub, opts = {}) {
+// Minimal fake interaction for the giveaway command. `msgId` sets the id the
+// mock reply returns, which becomes the giveaway's messageId — pass distinct
+// ids so multiple started giveaways don't collide in the in-memory store.
+function fakeInteraction(sub, opts = {}, msgId = "msg-1") {
 	const replies = [];
 	return {
 		guildId: "guild-1",
 		channelId: "chan-1",
+		guild: { id: "guild-1", name: "Test Guild" },
 		user: { id: "host-1", toString: () => "<@host-1>" },
 		client: fakeClient,
 		options: {
@@ -48,7 +65,7 @@ function fakeInteraction(sub, opts = {}) {
 		reply: async (payload) => {
 			replies.push(payload);
 			// start uses fetchReply:true and reads msg.id
-			return { id: "msg-1" };
+			return { id: msgId, react: async () => {} };
 		},
 		replies,
 	};
@@ -124,6 +141,31 @@ async function run() {
 	const list = fakeInteraction("list");
 	await giveaway.execute(list);
 	assert(/Nitro/.test(list.replies[0].content), "list shows the started giveaway");
+
+	// --- end path ------------------------------------------------------
+	// The started "Nitro" giveaway persisted with messageId "msg-1" (the mock
+	// reply id). Ending it draws winners (none: no entrants) and DMs them
+	// (none), then reports success — exercises the end branch end-to-end.
+	const end = fakeInteraction("end", { message_id: "msg-1" });
+	await giveaway.execute(end);
+	assert(/ended early/i.test(end.replies[0].content), "end reports the giveaway ended");
+
+	// ending an already-ended giveaway is rejected
+	const endAgain = fakeInteraction("end", { message_id: "msg-1" });
+	await giveaway.execute(endAgain);
+	assert(/already ended/i.test(endAgain.replies[0].content), "end rejects an already-ended giveaway");
+
+	// --- cancel path ---------------------------------------------------
+	const startForCancel = fakeInteraction("start", { prize: "Cancelme", duration: "1h" }, "msg-cancel");
+	await giveaway.execute(startForCancel);
+	const cancel = fakeInteraction("cancel", { message_id: "msg-cancel" });
+	await giveaway.execute(cancel);
+	assert(/cancelled/i.test(cancel.replies[0].content), "cancel reports the giveaway cancelled");
+
+	// cancel of a non-existent giveaway is rejected cleanly
+	const cancelMissing = fakeInteraction("cancel", { message_id: "does-not-exist" });
+	await giveaway.execute(cancelMissing);
+	assert(/not found/i.test(cancelMissing.replies[0].content), "cancel rejects unknown message_id");
 
 	// --- factory options ----------------------------------------------
 	const custom = createGiveawayCommand({}, { defaultDuration: "2h", maxWinners: 3 });

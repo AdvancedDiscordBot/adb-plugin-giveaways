@@ -1,6 +1,6 @@
 {
   "name": "adb-plugin-giveaways",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Host giveaways with configurable duration, winners, and requirements.",
   "main": "index.js",
   "files": [
