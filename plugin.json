@@ -1,7 +1,7 @@
 {
 	"name": "adb-plugin-giveaways",
 	"displayName": "Giveaways",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "Host giveaways with configurable duration, winners, and requirements. Reroll support, auto-end, and buttons to enter.",
 	"author": "DeadIndian",
 	"main": "index.js",
@@ -23,12 +23,24 @@
 		"system": ["raw-client"],
 		"storage": ["own-collection"],
 		"discord": ["SendMessages", "EmbedLinks", "ManageMessages"],
+		"hooks": ["subscribe"],
 		"network": { "outbound": [] },
 		"filesystem": { "read": [], "write": [] },
 		"childProcess": false,
 		"nativeAddons": false
 	},
 	"declaredDependencies": [{ "package": "node-cron", "version": "^3.0.3" }],
+	"engines": {
+		"core": ">=2.0.0",
+		"plugins": { "administration": ">=2.0.0" }
+	},
+	"settings": {
+		"commandPermissions": true,
+		"schema": [
+			{ "key": "defaultDuration", "type": "string", "label": "Default duration (e.g. 1h)" },
+			{ "key": "maxWinners", "type": "number", "label": "Max winners" }
+		]
+	},
 	"discordPermissions": ["SendMessages", "AddReactions"],
 	"configSchema": {
 		"type": "object",
