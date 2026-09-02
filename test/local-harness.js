@@ -75,7 +75,7 @@ async function run() {
 	console.log("\n=== adb-plugin-giveaways — Local Harness ===\n");
 
 	// --- load() ---------------------------------------------------------
-	const { ctx, registeredCommands, registeredEvents } = createMockCtx({
+	const { ctx, registeredCommands, registeredEvents, models, emitEvent } = createMockCtx({
 		pluginName: "adb-plugin-giveaways",
 	});
 	await load(ctx); // must not throw; starts cron (killed by process.exit)
@@ -167,8 +167,44 @@ async function run() {
 	await giveaway.execute(cancelMissing);
 	assert(/not found/i.test(cancelMissing.replies[0].content), "cancel rejects unknown message_id");
 
+	// --- member entry projection (/me/entries) -------------------------
+	const entryModel = models.get("plugin_adb-plugin-giveaways_entry");
+	assert(!!entryModel, "entry model defined for the member page");
+	const entries = () => entryModel._store.filter((e) => e.giveawayId === "msg-entries");
+
+	const startEntries = fakeInteraction("start", { prize: "Keycap Set", duration: "1h" }, "msg-entries");
+	await giveaway.execute(startEntries);
+
+	// Minimal button interaction for the giveaway_enter handler.
+	function buttonPress(userId) {
+		return {
+			isButton: () => true,
+			customId: "giveaway_enter",
+			guildId: "guild-1",
+			message: { id: "msg-entries" },
+			user: { id: userId, createdAt: new Date(Date.now() - 100 * 86400000) },
+			guild: { members: { fetch: async () => null } },
+			reply: async () => {},
+		};
+	}
+
+	await emitEvent("interactionCreate", buttonPress("joiner-1"));
+	assert(entries().length === 1, "joining creates an entry doc");
+	assert(entries()[0].userId === "joiner-1", "entry doc's userId is the joiner");
+	assert(entries()[0].prize === "Keycap Set", "entry doc carries the giveaway prize");
+
+	// leaving deletes the doc; rejoin so the end-with-winner check has an entrant
+	await emitEvent("interactionCreate", buttonPress("joiner-1"));
+	assert(entries().length === 0, "leaving deletes the entry doc");
+	await emitEvent("interactionCreate", buttonPress("joiner-1"));
+
+	const endEntries = fakeInteraction("end", { message_id: "msg-entries" });
+	await giveaway.execute(endEntries);
+	assert(/ended early/i.test(endEntries.replies[0].content), "entrant giveaway ends cleanly");
+	assert(entries().length === 1 && entries()[0].won === true, "finishing with a winner marks the entry won: true");
+
 	// --- factory options ----------------------------------------------
-	const custom = createGiveawayCommand({}, { defaultDuration: "2h", maxWinners: 3 });
+	const custom = createGiveawayCommand({}, null, { defaultDuration: "2h", maxWinners: 3 });
 	assert(custom.data.name === "giveaway", "factory returns a giveaway command");
 
 	console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

@@ -2,12 +2,14 @@ const cron = require("node-cron");
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const { createGiveawayCommand, pickWinners } = require("./commands/giveaway");
 const giveawaySchema = require("./models/giveaway");
+const entrySchema = require("./models/entry");
 
 async function load(ctx) {
   const GiveawayModel = ctx.defineModel("giveaway", giveawaySchema);
+  const EntryModel = ctx.defineModel("entry", entrySchema);
 
   // Correctly require the command factory function
-  const giveawayCommand = createGiveawayCommand(GiveawayModel);
+  const giveawayCommand = createGiveawayCommand(GiveawayModel, EntryModel);
   ctx.registerCommand(giveawayCommand);
 
   // Button interaction handler for entering giveaways
@@ -48,11 +50,23 @@ async function load(ctx) {
     if (giveaway.entrants.includes(interaction.user.id)) {
       giveaway.entrants = giveaway.entrants.filter((id) => id !== interaction.user.id);
       await giveaway.save();
+      await EntryModel.deleteOne({
+        guildId: interaction.guildId,
+        userId: interaction.user.id,
+        giveawayId: giveaway.messageId,
+      });
       return interaction.reply({ content: "You left the giveaway.", ephemeral: true });
     }
 
     giveaway.entrants.push(interaction.user.id);
     await giveaway.save();
+    await EntryModel.create({
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      giveawayId: giveaway.messageId,
+      prize: giveaway.prize,
+      endsAt: giveaway.endsAt,
+    });
 
     await interaction.reply({ content: "You entered the giveaway! 🎉", ephemeral: true });
   });
@@ -66,7 +80,7 @@ async function load(ctx) {
 
     for (const giveaway of due) {
       try {
-        await pickWinners(giveaway, ctx.client);
+        await pickWinners(giveaway, ctx.client, EntryModel);
         await giveaway.save();
 
         const channel = await ctx.client.channels.fetch(giveaway.channelId).catch(() => null);

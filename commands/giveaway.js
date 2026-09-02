@@ -29,7 +29,7 @@ async function dmWinners(giveaway, interaction) {
 	}
 }
 
-function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinners = 10 } = {}) {
+function createGiveawayCommand(GiveawayModel, EntryModel, { defaultDuration = "1h", maxWinners = 10 } = {}) {
 	return {
 		data: {
 			name: "giveaway",
@@ -185,7 +185,7 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 				}
 
 				giveaway.endsAt = new Date();
-				await pickWinners(giveaway, interaction.client);
+				await pickWinners(giveaway, interaction.client, EntryModel);
 				await giveaway.save();
 				await dmWinners(giveaway, interaction);
 
@@ -217,6 +217,15 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 				}
 				giveaway.winners = newWinners;
 				await giveaway.save();
+
+				// Mirror the reroll onto the per-user entry docs: previous winners
+				// lose the badge, the new draw gains it.
+				if (EntryModel) {
+					await EntryModel.updateMany({ guildId, giveawayId: messageId, won: true }, { won: false });
+					for (const id of newWinners) {
+						await EntryModel.updateOne({ guildId, giveawayId: messageId, userId: id }, { won: true });
+					}
+				}
 
 				const channel = await interaction.client.channels.fetch(giveaway.channelId).catch(() => null);
 				if (channel) {
@@ -254,6 +263,7 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 				}
 
 				await GiveawayModel.deleteOne({ _id: giveaway._id });
+				if (EntryModel) await EntryModel.deleteMany({ guildId, giveawayId: messageId });
 
 				// Best-effort: remove the giveaway message so no dead button lingers.
 				const channel = await interaction.client.channels.fetch(giveaway.channelId).catch(() => null);
@@ -268,7 +278,7 @@ function createGiveawayCommand(GiveawayModel, { defaultDuration = "1h", maxWinne
 	};
 }
 
-async function pickWinners(giveaway, client) {
+async function pickWinners(giveaway, client, EntryModel) {
 	// Mark ended first, unconditionally: an empty giveaway is still over. If we
 	// only set this after drawing, a giveaway with zero entrants stays ended:false
 	// and the 30s cron (and manual /giveaway end) re-processes it forever.
@@ -286,6 +296,18 @@ async function pickWinners(giveaway, client) {
 		winners.push(pool.splice(idx, 1)[0]);
 	}
 	giveaway.winners = winners;
+
+	// Mirror the win onto the winners' per-user entry docs (projection for the
+	// member page). EntryModel is optional so unit tests can call pickWinners
+	// on plain objects.
+	if (EntryModel) {
+		for (const id of winners) {
+			await EntryModel.updateOne(
+				{ guildId: giveaway.guildId, giveawayId: giveaway.messageId, userId: id },
+				{ won: true }
+			);
+		}
+	}
 }
 
 module.exports = { createGiveawayCommand, pickWinners };

@@ -1,7 +1,7 @@
 {
 	"name": "adb-plugin-giveaways",
 	"displayName": "Giveaways",
-	"version": "1.2.0",
+	"version": "1.3.0",
 	"description": "Host giveaways with configurable duration, winners, and requirements. Reroll support, auto-end, and buttons to enter.",
 	"author": "DeadIndian",
 	"main": "index.js",
@@ -42,6 +42,22 @@
 		]
 	},
 	"discordPermissions": ["SendMessages", "AddReactions"],
+	"webUi": {
+		"memberPages": [
+			{
+				"path": "/me/entries",
+				"label": "My Giveaway Entries",
+				"icon": "Gift",
+				"source": { "model": "entry", "scope": "member", "sort": { "endsAt": -1 }, "limit": 100 },
+				"view": {
+					"type": "list",
+					"title": "prize",
+					"badge": "won",
+					"empty": "You haven't entered any giveaways in this server."
+				}
+			}
+		]
+	},
 	"configSchema": {
 		"type": "object",
 		"properties": {
