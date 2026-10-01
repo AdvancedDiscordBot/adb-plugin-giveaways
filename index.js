@@ -1,126 +1,80 @@
 const cron = require("node-cron");
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
-const { createGiveawayCommand, pickWinners } = require("./commands/giveaway");
+const { createGiveawayCommand, finishGiveaway, withGiveaway } = require("./commands/giveaway");
 const giveawaySchema = require("./models/giveaway");
 const entrySchema = require("./models/entry");
 
 async function load(ctx) {
-  const GiveawayModel = ctx.defineModel("giveaway", giveawaySchema);
-  const EntryModel = ctx.defineModel("entry", entrySchema);
+	const GiveawayModel = ctx.defineModel("giveaway", giveawaySchema);
+	const EntryModel = ctx.defineModel("entry", entrySchema);
+	ctx.registerCommand(createGiveawayCommand(GiveawayModel, EntryModel, { db: ctx.db, logger: ctx.logger }));
+	if (ctx.config.commandCollection) return;
 
-  // Correctly require the command factory function
-  const giveawayCommand = createGiveawayCommand(GiveawayModel, EntryModel);
-  ctx.registerCommand(giveawayCommand);
+	ctx.registerEvent("interactionCreate", async (interaction) => {
+		if (!interaction.isButton() || interaction.customId !== "giveaway_enter") return;
+		await interaction.deferReply({ ephemeral: true });
+		const guildId = interaction.guildId;
+		const messageId = interaction.message.id;
+		try {
+			await withGiveaway(`${guildId}:${messageId}`, async () => {
+				const query = { guildId, messageId, ended: false, drawing: { $ne: true } };
+				const giveaway = await GiveawayModel.findOne({ ...query, endsAt: { $gt: new Date() } });
+				if (!giveaway) return interaction.editReply({ content: "This giveaway is over or a draw is in progress." });
+				const userId = interaction.user.id;
+				const leaving = giveaway.entrants.includes(userId);
+				if (!leaving && giveaway.requiredRole) {
+					const member = await interaction.guild.members.fetch(userId).catch(() => null);
+					if (!member || !member.roles.cache.has(giveaway.requiredRole)) {
+						return interaction.editReply({ content: `You need the <@&${giveaway.requiredRole}> role to enter.`, allowedMentions: { parse: [] } });
+					}
+				}
+				if (!leaving && giveaway.minAccountAge > 0) {
+					const age = (Date.now() - interaction.user.createdAt.getTime()) / 86400000;
+					if (age < giveaway.minAccountAge) {
+						return interaction.editReply({ content: `Your account must be at least ${giveaway.minAccountAge} days old.` });
+					}
+				}
 
-  // Button interaction handler for entering giveaways
-  ctx.registerEvent("interactionCreate", async (interaction, client) => {
-    if (!interaction.isButton() || interaction.customId !== "giveaway_enter") return;
+				// Recheck expiry after any slow Discord lookups, and update arrays atomically.
+				const updated = await GiveawayModel.findOneAndUpdate(
+					{ ...query, endsAt: { $gt: new Date() }, entrants: leaving ? userId : { $ne: userId } },
+					leaving ? { $pull: { entrants: userId } } : { $addToSet: { entrants: userId } },
+					{ new: true }
+				);
+				if (!updated) return interaction.editReply({ content: "This giveaway or your entry has changed. Check its status before trying again." });
+				const entryQuery = { guildId, userId, giveawayId: messageId };
+				if (leaving) {
+					await EntryModel.deleteMany(entryQuery);
+				} else {
+					await EntryModel.updateOne(entryQuery, {
+						$setOnInsert: { prize: giveaway.prize, endsAt: giveaway.endsAt },
+					}, { upsert: true });
+				}
+				return interaction.editReply({ content: leaving ? "You left the giveaway." : "You entered the giveaway!" });
+			});
+		} catch (error) {
+			ctx.logger.error("Failed to update giveaway entry", error);
+			await interaction.editReply({ content: "Unable to finish updating your entry. Check its status before retrying." });
+		}
+	});
 
-    const giveaway = await GiveawayModel.findOne({
-      guildId: interaction.guildId,
-      messageId: interaction.message.id,
-      ended: false,
-    });
-    if (!giveaway) {
-      return interaction.reply({ content: "This giveaway is over.", ephemeral: true });
-    }
-
-    // Role check
-    if (giveaway.requiredRole) {
-      const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-      if (!member || !member.roles.cache.has(giveaway.requiredRole)) {
-        return interaction.reply({
-          content: `You need the <@&${giveaway.requiredRole}> role to enter.`,
-          ephemeral: true,
-        });
-      }
-    }
-
-    // Account age check (disabled by default)
-    if (giveaway.minAccountAge > 0) {
-      const age = (Date.now() - interaction.user.createdAt.getTime()) / 86400000;
-      if (age < giveaway.minAccountAge) {
-        return interaction.reply({
-          content: `Your account must be at least ${giveaway.minAccountAge} days old.`,
-          ephemeral: true,
-        });
-      }
-    }
-
-    if (giveaway.entrants.includes(interaction.user.id)) {
-      giveaway.entrants = giveaway.entrants.filter((id) => id !== interaction.user.id);
-      await giveaway.save();
-      await EntryModel.deleteOne({
-        guildId: interaction.guildId,
-        userId: interaction.user.id,
-        giveawayId: giveaway.messageId,
-      });
-      return interaction.reply({ content: "You left the giveaway.", ephemeral: true });
-    }
-
-    giveaway.entrants.push(interaction.user.id);
-    await giveaway.save();
-    await EntryModel.create({
-      guildId: interaction.guildId,
-      userId: interaction.user.id,
-      giveawayId: giveaway.messageId,
-      prize: giveaway.prize,
-      endsAt: giveaway.endsAt,
-    });
-
-    await interaction.reply({ content: "You entered the giveaway! 🎉", ephemeral: true });
-  });
-
-  // Check every 30s for ended giveaways
-  const task = cron.schedule("*/30 * * * * *", async () => {
-    const due = await GiveawayModel.find({
-      ended: false,
-      endsAt: { $lte: new Date() },
-    }).limit(20);
-
-    for (const giveaway of due) {
-      try {
-        await pickWinners(giveaway, ctx.client, EntryModel);
-        await giveaway.save();
-
-        const channel = await ctx.client.channels.fetch(giveaway.channelId).catch(() => null);
-        if (!channel) continue;
-
-        const msg = await channel.messages.fetch(giveaway.messageId).catch(() => null);
-
-        const winText =
-          giveaway.winners.length > 0
-            ? `Congratulations ${giveaway.winners.map((id) => `<@${id}>`).join(", ")}! You won **${giveaway.prize}**!`
-            : "No eligible entrants.";
-
-        // Edit the original message
-        if (msg) {
-          const endedEmbed = EmbedBuilder.from(msg.embeds[0] || {})
-            .setColor(0x57f287)
-            .setFooter({ text: "Giveaway ended" });
-          const disabledRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId("giveaway_enter_disabled")
-              .setLabel("🎉 Ended")
-              .setStyle(ButtonStyle.Secondary)
-              .setDisabled(true)
-          );
-          await msg.edit({ embeds: [endedEmbed], components: [disabledRow] }).catch(() => {});
-        }
-
-        await channel.send(winText);
-        ctx.logger.info(`Giveaway "${giveaway.prize}" ended with ${giveaway.winners.length} winner(s)`);
-      } catch (error) {
-        ctx.logger.error(`Failed to end giveaway ${giveaway._id}`, error);
-      }
-    }
-  });
-
-  ctx.hooks.on("onPluginUnload", async ({ pluginName }) => {
-    if (pluginName === "adb-plugin-giveaways") task.stop();
-  });
-
-  ctx.logger.info("Giveaways plugin loaded");
+	const task = cron.schedule("*/30 * * * * *", async () => {
+		try {
+			const due = await GiveawayModel.find({ ended: false, drawing: { $ne: true }, endsAt: { $lte: new Date() } }).limit(20);
+			for (const giveaway of due) {
+				try {
+					await finishGiveaway(GiveawayModel, EntryModel, giveaway, ctx.client, { logger: ctx.logger });
+				} catch (error) {
+					ctx.logger.error(`Failed to end giveaway ${giveaway._id}`, error);
+				}
+			}
+		} catch (error) {
+			ctx.logger.error("Failed to scan due giveaways", error);
+		}
+	});
+	ctx.hooks.on("onPluginUnload", async ({ pluginName }) => {
+		if (pluginName === "adb-plugin-giveaways") task.stop();
+	});
+	ctx.logger.info("Giveaways plugin loaded");
 }
 
 module.exports = { load };

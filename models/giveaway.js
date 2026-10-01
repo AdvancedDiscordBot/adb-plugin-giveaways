@@ -8,6 +8,8 @@ module.exports = new Schema({
 	winnerCount: { type: Number, required: true, default: 1 },
 	endsAt: { type: Date, required: true, index: true },
 	ended: { type: Boolean, default: false },
+	drawing: { type: Boolean, default: false },
+	drawVersion: { type: Number, default: 0 },
 	hostId: { type: String, required: true },
 	entrants: [{ type: String }], // user IDs
 	winners: [{ type: String }],

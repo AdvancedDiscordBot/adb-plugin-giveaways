@@ -34,37 +34,32 @@
 // mirroring mongoose so tests see the same documents the bot would persist.
 function createFakeModel(fullName, schema) {
 	const store = [];
-	let idCounter = 1;
+	// Real schemas supply casting, Date/array defaults and detached documents.
+	const Document = require("mongoose").createConnection().model(fullName, schema);
 
-	// Extract simple `default` values from the schema definition (schema.obj).
-	const defaults = {};
-	const shapeObj = schema && (schema.obj || (schema.tree && schema.tree));
-	if (shapeObj) {
-		for (const [field, def] of Object.entries(shapeObj)) {
-			if (def && typeof def === "object" && "default" in def) {
-				defaults[field] = def.default;
-			}
-		}
-	}
-	function applyDefaults(doc) {
-		for (const [field, val] of Object.entries(defaults)) {
-			if (doc[field] === undefined) {
-				doc[field] = typeof val === "function" ? val() : val;
-			}
-		}
-		return doc;
-	}
-
+	const equal = (a, b) => a == null && b == null ? true : a?.equals ? a.equals(b) : a instanceof Date ? +a === +b : a === b;
 	const matches = (doc, query = {}) =>
 		Object.keys(query).every((k) => {
-			if (k === "_id") return String(doc._id) === String(query[k]);
-			return doc[k] === query[k];
+			const value = query[k];
+			if (value && typeof value === "object" && !(value instanceof Date) && !value._bsontype) {
+				return Object.entries(value).every(([op, v]) => {
+					if (op === "$lte") return doc[k] <= v;
+					if (op === "$lt") return doc[k] < v;
+					if (op === "$gte") return doc[k] >= v;
+					if (op === "$gt") return doc[k] > v;
+					if (op === "$ne") return Array.isArray(doc[k]) ? !doc[k].some((x) => equal(x, v)) : !equal(doc[k], v);
+					if (op === "$in") return v.some((x) => equal(doc[k], x));
+					throw new Error(`Unsupported query operator: ${op}`);
+				});
+			}
+			return Array.isArray(doc[k]) ? doc[k].some((x) => equal(x, value)) : equal(doc[k], value);
 		});
 
 	// A thenable query builder over a snapshot array.
-	function query(resultFactory) {
+	function query(resultFactory, single = false) {
 		const builder = {
-			sort() {
+			sort(order) {
+				builder._sort = order;
 				return builder;
 			},
 			limit(n) {
@@ -88,8 +83,17 @@ function createFakeModel(fullName, schema) {
 				try {
 					let out = resultFactory();
 					if (Array.isArray(out)) {
+						if (builder._sort) out.sort((a, b) => {
+							for (const [key, direction] of Object.entries(builder._sort)) {
+								if (a[key] < b[key]) return -direction;
+								if (a[key] > b[key]) return direction;
+							}
+							return 0;
+						});
 						if (builder._skip) out = out.slice(builder._skip);
 						if (builder._limit != null) out = out.slice(0, builder._limit);
+						out = out.map(wrapDoc);
+						if (single) out = out[0] || null;
 					}
 					return Promise.resolve(out).then(resolve, reject);
 				} catch (err) {
@@ -104,10 +108,15 @@ function createFakeModel(fullName, schema) {
 	}
 
 	function wrapDoc(doc) {
-		// Give each stored doc a save() like a mongoose document.
+		doc = new Document(doc).toObject();
 		Object.defineProperty(doc, "save", {
 			value: async function () {
-				if (!store.includes(doc)) store.push(doc);
+				const validated = new Document(doc);
+				const error = validated.validateSync();
+				if (error) throw error;
+				const index = store.findIndex((d) => equal(d._id, doc._id));
+				if (index < 0) store.push(validated.toObject());
+				else store[index] = validated.toObject();
 				return doc;
 			},
 			enumerable: false,
@@ -121,25 +130,26 @@ function createFakeModel(fullName, schema) {
 			return query(() => store.filter((d) => matches(d, q)));
 		},
 		findOne(q = {}) {
-			return query(() => store.find((d) => matches(d, q)) || null);
+			return query(() => store.filter((d) => matches(d, q)), true);
 		},
 		findById(id) {
-			return query(() => store.find((d) => String(d._id) === String(id)) || null);
+			return query(() => store.filter((d) => equal(d._id, id)), true);
 		},
 		async findOneAndUpdate(q = {}, update = {}, opts = {}) {
 			let doc = store.find((d) => matches(d, q));
+			const before = doc ? wrapDoc(doc) : null;
 			if (!doc && opts.upsert) {
-				doc = wrapDoc(applyDefaults({ _id: idCounter++, ...q }));
+				doc = new Document({ ...q, ...update.$setOnInsert }).toObject();
 				store.push(doc);
 			}
 			if (!doc) return null;
 			applyUpdate(doc, update);
-			return opts.new === false ? doc : doc;
+			return opts.new === true || opts.returnDocument === "after" || opts.returnOriginal === false ? wrapDoc(doc) : before;
 		},
 		async updateOne(q = {}, update = {}, opts = {}) {
 			let doc = store.find((d) => matches(d, q));
 			if (!doc && opts.upsert) {
-				doc = wrapDoc(applyDefaults({ _id: idCounter++, ...q }));
+				doc = new Document({ ...q, ...update.$setOnInsert }).toObject();
 				store.push(doc);
 			}
 			if (doc) applyUpdate(doc, update);
@@ -151,8 +161,8 @@ function createFakeModel(fullName, schema) {
 			return { acknowledged: true, modifiedCount: docs.length };
 		},
 		async create(doc) {
-			const entry = wrapDoc(applyDefaults({ _id: idCounter++, ...doc }));
-			store.push(entry);
+			const entry = wrapDoc(doc);
+			await entry.save();
 			return entry;
 		},
 		async deleteOne(q = {}) {
@@ -173,12 +183,25 @@ function createFakeModel(fullName, schema) {
 		// constructor-style: new Model(doc) then doc.save()
 		// exposed as .build() to avoid needing `new`
 		build(doc) {
-			return wrapDoc({ _id: idCounter++, ...doc });
+			return wrapDoc(doc);
 		},
 		_store: store,
 	};
 
 	function applyUpdate(doc, update) {
+		if (update.$max) {
+			for (const [key, value] of Object.entries(update.$max)) {
+				if (doc[key] == null || doc[key] < value) doc[key] = value;
+			}
+		}
+		if (update.$addToSet) {
+			for (const [key, value] of Object.entries(update.$addToSet)) {
+				if (!doc[key].includes(value)) doc[key].push(value);
+			}
+		}
+		if (update.$pull) {
+			for (const [key, value] of Object.entries(update.$pull)) doc[key] = doc[key].filter((v) => !equal(v, value));
+		}
 		if (update.$set) Object.assign(doc, update.$set);
 		if (update.$inc) {
 			for (const [k, v] of Object.entries(update.$inc)) {
