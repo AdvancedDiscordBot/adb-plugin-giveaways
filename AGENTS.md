@@ -7,7 +7,36 @@ This file is the short local copy.
 
 ---
 
-## 1. Do not touch the core repository
+## 1. Ask what they want to do — before anything else
+
+Read the repo, then **ask the user which of these they want.** Do not assume, and
+do not start work first and ask later:
+
+> I've read the repo. What would you like to do?
+>
+> 1. **Fix a bug here** — tell me the symptom; I'll reproduce it before changing
+>    anything.
+> 2. **Add a feature** — describe what it should do and I'll follow the checklist
+>    below (both load modes, declared capabilities, tests).
+> 3. **Improve or refactor** — say what you're unhappy with; I'll check first
+>    whether the existing behaviour is deliberate.
+> 4. **Add tests** — I'll run the current suite, show you what it covers, and
+>    find the gaps.
+> 5. **Update docs** — I'll verify every claim against the code first.
+>
+> If you already know, skip ahead.
+
+Where the answer lands:
+
+| Answer | Where the change goes |
+|---|---|
+| 1–5 | **this repository** — this is a plugin repo |
+| "add a feature to the bot overall" | ask whether it is plugin-shaped; if it is not a plugin, say so and confirm before touching the core repo |
+| "make a new plugin" | stop here — this is the wrong repository. Clone `adb-plugin-template` into a **new** repo instead |
+
+---
+
+## 2. Do not touch the core repository
 
 The `Advanced-Discord-Bot` repository is the **platform core**. You may clone it to
 use as a local runtime host, but you must not create branches in it, commit into
@@ -32,7 +61,7 @@ commands to the core repo's `commands/`.
 
 ---
 
-## 2. Do not write code before the bot has been run and the plugin tested
+## 3. Do not write code before the bot has been run and the plugin tested
 
 If you have not seen this plugin running in a real bot, you are guessing. Before
 your first edit, ask the user to:
@@ -55,7 +84,7 @@ not reproduced yourself.
 
 ---
 
-## 3. Read the contract before you change anything
+## 4. Read the contract before you change anything
 
 - `plugin.json` — the **declared** manifest. It is what the runtime enforces, not
   documentation. If your change needs a new capability, permission, or a newer
@@ -92,7 +121,7 @@ trust-granting escalation. Write for isolated mode by default.
 
 ---
 
-## 4. Verify, then report honestly
+## 5. Verify, then report honestly
 
 ```bash
 npm install && npm test        # in this repo — offline, both load modes
@@ -115,7 +144,7 @@ npm run test:integration
 
 ---
 
-## 5. Secrets
+## 6. Secrets
 
 Never commit `.env`, tokens, client ids, OAuth secrets, session secrets or
 database connection strings. Never point this plugin at production infrastructure
@@ -124,7 +153,7 @@ database name starting in `adb_verify_`.
 
 ---
 
-## 6. Bugs and PRs
+## 7. Bugs and PRs
 
 File bugs **in this repository**, with the `bug` label: version/commit, the
 smallest reproduction you have, the actual log output, and expected behaviour. If
@@ -138,6 +167,28 @@ Ask before you proceed if: the fix would require changing the plugin API, the
 manifest format or the capability model; the change is arguably a core change
 rather than a plugin change; or you need a token, database or network access you
 do not have.
+
+## 8. AI assistance: allowed, low-effort volume: not
+
+Using an AI assistant to write, review or refactor this plugin is **welcome**.
+What is not welcome is a stream of unreviewed, unreproduced pull requests.
+
+The bar is identical for a human or an agent:
+
+- **You must have run the code.** Paste the real output. "It should work" is not
+  evidence.
+- **You must understand your diff.** If you cannot say why each changed line is
+  there, do not open the PR.
+- **One change per PR.** No drive-by reformatting.
+- **No speculative PRs.** A suspicion is an issue, not a pull request.
+- **Describe the reasoning, not the diff.** A PR body that restates `git diff`
+  adds nothing. Say what was broken, what you observed, and why this is the fix.
+
+PRs generated without the author having run or understood the change are closed
+with a short explanation and not reviewed further. This is about accountability,
+not tools — a good AI-assisted PR is indistinguishable from a good human one.
+
+---
 
 Full reference: [`AGENTS.md`](https://github.com/AdvancedDiscordBot/Advanced-Discord-Bot/blob/main/AGENTS.md)
 · [`CREATE-PLUGIN.md`](https://github.com/AdvancedDiscordBot/Advanced-Discord-Bot/blob/main/CREATE-PLUGIN.md)
